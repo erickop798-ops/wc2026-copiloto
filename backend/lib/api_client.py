@@ -96,7 +96,16 @@ class APIFootballClient:
 
         expires_at = (now + timedelta(hours=cache_hours)).isoformat()
 
-        # 4. Persist to cache and log the real request
+        # 4. Persist to cache only when API returned no errors, then log
+        if data.get("errors"):
+            with get_db_connection() as conn:
+                conn.execute(
+                    "INSERT INTO request_log (date, endpoint, params, status_code, cached, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (now.strftime("%Y-%m-%d"), endpoint, json.dumps(params), status_code, 0, now_str),
+                )
+            return data
+
         with get_db_connection() as conn:
             conn.execute(
                 """

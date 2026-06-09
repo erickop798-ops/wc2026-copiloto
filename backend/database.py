@@ -89,6 +89,31 @@ CREATE TABLE IF NOT EXISTS model_calibration (
     matches_count    INTEGER,
     updated_at       TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS standings (
+    team_id      INTEGER PRIMARY KEY,
+    team_name    TEXT,
+    group_name   TEXT,
+    played       INTEGER,
+    wins         INTEGER,
+    draws        INTEGER,
+    losses       INTEGER,
+    goals_for    INTEGER,
+    goals_against INTEGER,
+    goal_diff    INTEGER,
+    points       INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS injuries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    fixture_id  INTEGER,
+    player_id   INTEGER,
+    player_name TEXT,
+    team_id     INTEGER,
+    type        TEXT,
+    reason      TEXT,
+    fetched_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
