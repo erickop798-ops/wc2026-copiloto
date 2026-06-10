@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wc2026 copiloto</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0f172a; color: #f1f5f9; font-family: system-ui, sans-serif; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+  .value-card { background: #14532d; border: 1px solid #16a34a; }
+  .market-row { border-bottom: 1px solid #1e293b; }
+  .market-row:last-child { border-bottom: none; }
+  .badge-group { background: #1d4ed8; color: #bfdbfe; font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+  .badge-value { background: #15803d; color: #bbf7d0; font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+  .badge-info  { background: #374151; color: #9ca3af; font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+  .odds-positive { color: #4ade80; font-weight: 600; }
+  .odds-negative { color: #60a5fa; font-weight: 600; }
+  .edge-strong { color: #4ade80; font-weight: 700; }
+  .edge-normal { color: #86efac; font-weight: 600; }
+  .edge-neutral { color: #94a3b8; }
+  .edge-bad    { color: #f87171; }
+  .loading { animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .tab-active { background: #1d4ed8; color: white; }
+  .tab-inactive { background: #1e293b; color: #94a3b8; }
+  .tab-inactive:hover { background: #334155; color: #e2e8f0; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="sticky top-0 z-10" style="background:#0f172a; border-bottom:1px solid #1e293b;">
+  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div>
+      <div class="flex items-center gap-2">
+        <span style="font-size:20px">&#9917;</span>
+        <span class="text-white font-semibold text-lg">wc2026 copiloto</span>
+      </div>
+      <div id="header-sub" class="text-xs text-slate-400 mt-0.5">Cargando...</div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div id="vb-summary" class="hidden text-right">
+        <div class="text-green-400 font-semibold text-sm" id="vb-count">0 value bets</div>
+        <div class="text-slate-400 text-xs" id="vb-stake">0 MXN total</div>
+      </div>
+      <button onclick="refreshData()"
+              class="text-xs px-3 py-1.5 rounded-lg tab-inactive transition-all"
+              title="Actualizar datos">
+        &#8635; Actualizar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="max-w-5xl mx-auto px-4 pt-4 pb-2">
+  <div class="flex gap-2">
+    <button onclick="setTab('hoy')"    id="tab-hoy"    class="tab-active   text-sm px-4 py-1.5 rounded-lg transition-all">Hoy</button>
+    <button onclick="setTab('manana')" id="tab-manana" class="tab-inactive text-sm px-4 py-1.5 rounded-lg transition-all">Manana</button>
+    <button onclick="setTab('todos')"  id="tab-todos"  class="tab-inactive text-sm px-4 py-1.5 rounded-lg transition-all">Proximos 3 dias</button>
+    <button onclick="setTab('tabla')"  id="tab-tabla"  class="tab-inactive text-sm px-4 py-1.5 rounded-lg transition-all">Tabla de grupos</button>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="max-w-5xl mx-auto px-4 pb-8">
+  <div id="content-predictions">
+    <div id="no-matches" class="hidden text-center py-16 text-slate-500">
+      Sin partidos en este rango. Ejecuta run_predictions.py para actualizar.
+    </div>
+    <div id="matches-container"></div>
+  </div>
+  <div id="content-tabla" class="hidden"></div>
+</div>
+
+<script>
+// Estado global
+let allMatches = [];
+let currentTab = 'hoy';
+
+document.addEventListener('DOMContentLoaded', () => {
+  refreshData();
+  setInterval(refreshData, 5 * 60 * 1000);
+});
+
+async function refreshData() {
+  try {
+    const [predsRes, statsRes] = await Promise.all([
+      fetch('/api/predictions'),
+      fetch('/api/stats')
+    ]);
+    const preds = await predsRes.json();
+    const stats = await statsRes.json();
+
+    allMatches = preds.matches || [];
+    updateHeader(preds, stats);
+    renderTab(currentTab);
+  } catch(err) {
+    document.getElementById('header-sub').textContent =
+      'Error conectando con el servidor. Verifica que main.py esta corriendo.';
+  }
+}
+
+function updateHeader(preds, stats) {
+  const now     = new Date();
+  const timeStr = now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'});
+  const dateStr = now.toLocaleDateString('es-MX', {weekday:'long', day:'numeric', month:'long'});
+  document.getElementById('header-sub').textContent =
+    dateStr + ' · Actualizado ' + timeStr + ' · Modelo: ' + stats.model;
+
+  const vbCount = preds.total_value_bets || 0;
+  const vbStake = preds.total_stake_mxn  || 0;
+  if (vbCount > 0) {
+    document.getElementById('vb-summary').classList.remove('hidden');
+    document.getElementById('vb-count').textContent =
+      vbCount + ' value bet' + (vbCount !== 1 ? 's' : '');
+    document.getElementById('vb-stake').textContent = vbStake + ' MXN sugeridos';
+  }
+}
+
+function setTab(tab) {
+  currentTab = tab;
+  ['hoy','manana','todos','tabla'].forEach(t => {
+    const el = document.getElementById('tab-' + t);
+    if (el) el.className =
+      (t === tab ? 'tab-active' : 'tab-inactive') +
+      ' text-sm px-4 py-1.5 rounded-lg transition-all';
+  });
+  renderTab(tab);
+}
+
+function renderTab(tab) {
+  const predsDiv = document.getElementById('content-predictions');
+  const tablaDiv = document.getElementById('content-tabla');
+
+  if (tab === 'tabla') {
+    predsDiv.classList.add('hidden');
+    tablaDiv.classList.remove('hidden');
+    loadStandings();
+    return;
+  }
+
+  predsDiv.classList.remove('hidden');
+  tablaDiv.classList.add('hidden');
+
+  const now      = new Date();
+  const todayS   = now.toISOString().slice(0,10);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const tomorrowS = tomorrow.toISOString().slice(0,10);
+
+  let filtered;
+  if (tab === 'hoy') {
+    filtered = allMatches.filter(m => m.date_utc.slice(0,10) === todayS);
+  } else if (tab === 'manana') {
+    filtered = allMatches.filter(m => m.date_utc.slice(0,10) === tomorrowS);
+  } else {
+    filtered = allMatches;
+  }
+
+  const container = document.getElementById('matches-container');
+  const noMatches = document.getElementById('no-matches');
+
+  if (!filtered.length) {
+    container.innerHTML = '';
+    noMatches.classList.remove('hidden');
+    return;
+  }
+
+  noMatches.classList.add('hidden');
+  container.innerHTML = filtered.map(m => renderMatchCard(m)).join('');
+}
+
+// ── Match Card ────────────────────────────────────────────────────────────────
+function renderMatchCard(m) {
+  const mexTime  = toMexicoTime(m.date_utc);
+  const vbSection = m.value_bets.length
+    ? renderValueBets(m.value_bets)
+    : `<div class="px-4 py-2 text-slate-500 text-xs">
+         Sin value bets en este partido (edge &lt; 5%)
+       </div>`;
+
+  return `
+  <div class="card mb-4 overflow-hidden">
+
+    <!-- Equipos y meta -->
+    <div class="px-4 py-3 flex items-start justify-between"
+         style="border-bottom:1px solid #334155">
+      <div>
+        <div class="flex items-center gap-3">
+          <span class="text-white font-semibold text-base">${m.home}</span>
+          <span class="text-slate-500 text-sm">vs</span>
+          <span class="text-white font-semibold text-base">${m.away}</span>
+        </div>
+        <div class="text-xs text-slate-400 mt-1">
+          ${mexTime} hora Mexico &nbsp;&middot;&nbsp; ${m.round}
+        </div>
+      </div>
+      <span class="badge-group mt-1">${m.group}</span>
+    </div>
+
+    <!-- Lambdas del modelo -->
+    <div class="px-4 py-2 flex gap-4 text-xs text-slate-400"
+         style="border-bottom:1px solid #334155">
+      <span>Modelo: &lambda; ${m.home.split(' ')[0]}
+        <strong class="text-slate-200">${(m.model.lambda_home||0).toFixed(2)}</strong>
+      </span>
+      <span>&lambda; ${m.away.split(' ')[0]}
+        <strong class="text-slate-200">${(m.model.lambda_away||0).toFixed(2)}</strong>
+      </span>
+      <span class="text-slate-500">(goles esperados por equipo)</span>
+    </div>
+
+    <!-- Value bets -->
+    <div style="border-bottom:1px solid #334155">${vbSection}</div>
+
+    <!-- Mercados con comparacion bookmaker -->
+    <div class="px-4 py-3">
+      <div class="text-xs font-medium text-slate-400 mb-2 uppercase tracking-wide">
+        Todos los mercados — modelo vs bookmaker
+      </div>
+      ${renderMarkets(m)}
+    </div>
+
+    <!-- Informativos -->
+    <div class="px-4 pb-3">
+      <div class="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wide">
+        Solo modelo (sin comparacion bookmaker)
+      </div>
+      ${renderInfoMarkets(m)}
+    </div>
+
+  </div>`;
+}
+
+// ── Value Bets ────────────────────────────────────────────────────────────────
+function renderValueBets(vbs) {
+  const rows = vbs.map(vb => {
+    const edgeClass = vb.edge_raw >= 10 ? 'edge-strong' : 'edge-normal';
+    const bm_display = vb.bm_pct ? vb.bm_pct : vb.bookmaker_odds_american;
+    return `
+    <div class="flex items-start justify-between py-2 px-4"
+         style="border-bottom:1px solid #166534">
+      <div class="flex-1 pr-4">
+        <div class="flex items-center gap-2">
+          <span class="text-green-300 font-semibold text-sm">
+            ${vb.market} &mdash; ${vb.outcome}
+          </span>
+          <span class="badge-value">${vb.bookmaker_odds_american}</span>
+        </div>
+        <div class="text-green-600 text-xs mt-0.5">${vb.explanation}</div>
+        <div class="text-xs text-green-700 mt-0.5">
+          Modelo: ${vb.model_pct} &nbsp;&middot;&nbsp;
+          Bookmaker: ${bm_display} &nbsp;&middot;&nbsp;
+          ${vb.bookmaker}
+        </div>
+      </div>
+      <div class="text-right whitespace-nowrap">
+        <div class="${edgeClass} text-base">${vb.edge_pct} edge</div>
+        <div class="text-green-400 font-semibold text-sm mt-0.5">
+          ${vb.kelly_stake_mxn} MXN
+        </div>
+        <div class="text-green-700 text-xs">${vb.kelly_pct} del bankroll</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const totalStake = vbs.reduce((s, v) => s + v.kelly_stake_mxn, 0);
+  return `
+  <div class="value-card">
+    <div class="px-4 py-2 flex items-center justify-between"
+         style="border-bottom:1px solid #166534">
+      <span class="text-green-400 font-semibold text-sm">
+        &#9733; VALUE BETS DETECTADOS (${vbs.length})
+      </span>
+      <span class="text-green-300 text-sm font-semibold">Total: ${totalStake} MXN</span>
+    </div>
+    ${rows}
+  </div>`;
+}
+
+// ── Markets Table ─────────────────────────────────────────────────────────────
+function renderMarkets(m) {
+  const realMarkets = m.markets.filter(mk => !mk.is_info && mk.bm_american);
+  if (!realMarkets.length) {
+    return '<div class="text-xs text-slate-500">Sin datos de bookmaker disponibles. Ejecuta seed.py.</div>';
+  }
+
+  const grouped = {};
+  realMarkets.forEach(mk => {
+    if (!grouped[mk.market]) grouped[mk.market] = [];
+    grouped[mk.market].push(mk);
+  });
+
+  return Object.entries(grouped).map(([market, outcomes]) => `
+  <div class="mb-3">
+    <div class="text-xs text-slate-500 mb-1 font-medium">${market}</div>
+    <div style="border:1px solid #334155; border-radius:8px; overflow:hidden;">
+      ${outcomes.map(o => `
+      <div class="market-row flex items-center justify-between px-3 py-2
+                  ${o.is_value ? 'bg-green-950' : ''}">
+        <div class="flex-1">
+          <span class="text-sm ${o.is_value ? 'text-green-300 font-medium' : 'text-slate-200'}">
+            ${o.outcome}
+          </span>
+          <span class="text-xs text-slate-500 ml-2">${o.explanation}</span>
+          ${o.is_value ? '<span class="badge-value ml-2">VALUE</span>' : ''}
+        </div>
+        <div class="flex items-center gap-6 text-sm">
+          <div class="text-right">
+            <div class="text-slate-400 text-xs">Modelo</div>
+            <div class="text-white font-medium">${o.model_pct}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-slate-400 text-xs">Bookmaker</div>
+            <div class="${o.bm_american && o.bm_american.startsWith('+') ? 'odds-positive' : 'odds-negative'}">
+              ${o.bm_american || 'N/A'}
+            </div>
+            <div class="text-slate-500 text-xs">${o.bm_pct || ''}</div>
+          </div>
+          <div class="text-right w-16">
+            <div class="text-slate-400 text-xs">Edge</div>
+            <div class="${getEdgeClass(o.edge_color)}">${o.edge || '-'}</div>
+          </div>
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>`).join('');
+}
+
+// ── Info Markets ──────────────────────────────────────────────────────────────
+function renderInfoMarkets(m) {
+  const MODEL = m.model;
+  const items = [
+    { label: 'Over 1.5 goles', val: MODEL.over_15, desc: '2 o mas goles — casi siempre ocurre' },
+    { label: 'Over 3.5 goles', val: MODEL.over_35, desc: '4 o mas goles en total' },
+    { label: 'BTTS Si',        val: MODEL.btts_yes, desc: 'Los dos equipos anotan' },
+    { label: 'DC 1X — ' + m.home + ' no pierde', val: MODEL.dc_1x, desc: 'Local gana o empata' },
+    { label: 'DC X2 — ' + m.away + ' no pierde', val: MODEL.dc_x2, desc: 'Visitante gana o empata' },
+    { label: 'DC 12 — Alguien gana', val: MODEL.dc_12, desc: 'El empate hace perder' },
+  ];
+  return `
+  <div class="grid grid-cols-2 gap-2">
+    ${items.map(i => `
+    <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:8px 12px;">
+      <div class="text-xs text-slate-500">${i.label}</div>
+      <div class="text-white font-semibold text-sm mt-0.5">${i.val}</div>
+      <div class="text-xs text-slate-600 mt-0.5">${i.desc}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── Standings ─────────────────────────────────────────────────────────────────
+async function loadStandings() {
+  const container = document.getElementById('content-tabla');
+  container.innerHTML =
+    '<div class="loading text-slate-500 text-center py-12">Cargando tabla de grupos...</div>';
+
+  try {
+    const res    = await fetch('/api/standings');
+    const data   = await res.json();
+    const groups = data.groups || [];
+
+    if (!groups.length) {
+      container.innerHTML =
+        '<div class="text-slate-500 text-center py-12">Sin datos de standings todavia.</div>';
+      return;
+    }
+
+    container.innerHTML = `
+    <div class="grid grid-cols-1 gap-4 pt-2"
+         style="grid-template-columns: repeat(auto-fill, minmax(320px,1fr))">
+      ${groups.map(g => `
+      <div class="card overflow-hidden">
+        <div class="px-4 py-2"
+             style="background:#1d4ed8; color:white; font-weight:600; font-size:13px;">
+          ${g.group}
+        </div>
+        <table class="w-full text-sm">
+          <thead>
+            <tr style="border-bottom:1px solid #334155">
+              <th class="text-left px-3 py-1.5 text-slate-400 text-xs font-medium">Equipo</th>
+              <th class="text-center px-2 py-1.5 text-slate-400 text-xs">PJ</th>
+              <th class="text-center px-2 py-1.5 text-slate-400 text-xs">G</th>
+              <th class="text-center px-2 py-1.5 text-slate-400 text-xs">E</th>
+              <th class="text-center px-2 py-1.5 text-slate-400 text-xs">P</th>
+              <th class="text-center px-2 py-1.5 text-slate-400 text-xs">DG</th>
+              <th class="text-center px-2 py-1.5 text-slate-400 text-xs font-bold text-white">PTS</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${g.teams.map((t, i) => `
+            <tr style="${i < 2 ? 'background:#0c2340;' : ''} border-bottom:1px solid #1e293b;">
+              <td class="px-3 py-2 text-sm ${i < 2 ? 'text-blue-300 font-medium' : 'text-slate-300'}">
+                ${t.team}
+              </td>
+              <td class="text-center px-2 py-2 text-slate-400">${t.played}</td>
+              <td class="text-center px-2 py-2 text-green-400">${t.won}</td>
+              <td class="text-center px-2 py-2 text-slate-400">${t.drawn}</td>
+              <td class="text-center px-2 py-2 text-red-400">${t.lost}</td>
+              <td class="text-center px-2 py-2 text-slate-300">
+                ${t.gd > 0 ? '+' + t.gd : t.gd}
+              </td>
+              <td class="text-center px-2 py-2 font-bold text-white">${t.pts}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`).join('')}
+    </div>
+    <div class="text-xs text-slate-600 text-center pt-3 pb-1">
+      Azul = clasificados a siguiente ronda (posicion estimada)
+    </div>`;
+  } catch(err) {
+    container.innerHTML =
+      '<div class="text-red-400 text-center py-12">Error cargando standings: ' +
+      err.message + '</div>';
+  }
+}
+
+// ── Utilidades ────────────────────────────────────────────────────────────────
+function getEdgeClass(colorName) {
+  const map = {
+    'strong-value': 'edge-strong',
+    'value':        'edge-normal',
+    'neutral':      'edge-neutral',
+    'no-value':     'edge-bad',
+  };
+  return map[colorName] || 'edge-neutral';
+}
+
+function toMexicoTime(utcStr) {
+  try {
+    const d = new Date(utcStr.includes('Z') ? utcStr : utcStr + 'Z');
+    return d.toLocaleString('es-MX', {
+      timeZone: 'America/Mexico_City',
+      weekday:  'short',
+      day:      '2-digit',
+      month:    'short',
+      hour:     '2-digit',
+      minute:   '2-digit',
+    });
+  } catch(e) { return utcStr; }
+}
+</script>
+</body>
+</html>

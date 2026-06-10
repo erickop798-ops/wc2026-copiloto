@@ -1,7 +1,8 @@
-requests
+requests>=2.33.0
 python-dotenv
-fastapi
-uvicorn
+fastapi[standard]
+uvicorn[standard]
+aiofiles
 numpy
 scipy
 pytest

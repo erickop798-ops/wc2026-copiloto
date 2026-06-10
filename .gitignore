@@ -1,7 +1,9 @@
 .env
 .env.txt
 __pycache__/
-*.db
+# Solo ignorar bases de datos de test/dev
+test.db
+dev.db
 *.pyc
 *.pyo
 .pytest_cache/
