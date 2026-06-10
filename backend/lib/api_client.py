@@ -58,6 +58,7 @@ class APIFootballClient:
         if params is None:
             params = {}
 
+        endpoint = endpoint.lstrip("/")  # normalise "/fixtures" → "fixtures"
         params_hash = self._params_hash(endpoint, params)
         now = datetime.now(timezone.utc)
         now_str = now.isoformat()
@@ -159,3 +160,20 @@ class APIFootballClient:
 
     def get_fixture_statistics(self, fixture_id: int) -> dict:
         return self._get("fixtures/statistics", {"fixture": fixture_id}, cache_hours=12)
+
+    def get_fixtures_2022(self) -> dict:
+        return self._get("fixtures", {"league": 1, "season": 2022}, cache_hours=24)
+
+    def get_historical_h2h(self, team_a_id: int, team_b_id: int, last: int = 10) -> dict:
+        return self._get(
+            "fixtures/headtohead",
+            {"h2h": f"{team_a_id}-{team_b_id}", "league": 1, "season": 2022, "last": last},
+            cache_hours=24,
+        )
+
+    def get_team_stats_2022(self, team_id: int) -> dict:
+        return self._get(
+            "teams/statistics",
+            {"league": 1, "season": 2022, "team": team_id},
+            cache_hours=24,
+        )

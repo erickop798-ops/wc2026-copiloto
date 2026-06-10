@@ -1,225 +1,168 @@
-"""Seed script: fetches real WC data from API-Football and stores it in SQLite.
-
-On free API plans, season=2026 may not be available yet; the script falls
-back to season=2022 (last available WC) so the full pipeline can be validated
-with real data.
 """
+Seed script - arquitectura hibrida 3 fuentes:
+  PASO 1: openfootball (sin cuota) -> fixtures WC 2026 + grupos
+  PASO 2: The Odds API             -> cuotas partidos proximos
+  PASO 3: API-Football             -> fixtures historicos WC 2022
+"""
+import hashlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Make project root importable when run as a script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from backend.database import get_db_connection, init_db
 from backend.lib.api_client import APIFootballClient, RateLimitError
+from backend.lib.odds_api_client import OddsAPIClient, OddsAPIQuotaError
+from backend.lib.openfootball_client import OpenFootballClient
+from backend.lib.team_resolver import is_placeholder, resolve_team_name
 
 
 # ---------------------------------------------------------------------------
-# Parsers / savers
+# DB migration helpers (can't touch database.py per session rules)
 # ---------------------------------------------------------------------------
 
-def save_fixtures(conn, data: dict) -> int:
-    count = 0
-    for item in data.get("response", []):
-        f = item.get("fixture", {})
-        teams = item.get("teams", {})
-        goals = item.get("goals", {})
-        league = item.get("league", {})
-        venue = f.get("venue", {}) or {}
-
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO fixtures
-              (fixture_id, home_team_id, home_team_name, away_team_id, away_team_name,
-               date_utc, venue, city, round, group_name, status, home_goals, away_goals)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f.get("id"),
-                teams.get("home", {}).get("id"),
-                teams.get("home", {}).get("name"),
-                teams.get("away", {}).get("id"),
-                teams.get("away", {}).get("name"),
-                f.get("date"),
-                venue.get("name"),
-                venue.get("city"),
-                league.get("round"),
-                league.get("group"),
-                (f.get("status") or {}).get("short"),
-                goals.get("home"),
-                goals.get("away"),
-            ),
-        )
-        count += 1
-    return count
+def _migrate(conn) -> None:
+    """Add columns that didn't exist in Session 1 schema."""
+    migrations = [
+        "ALTER TABLE fixtures ADD COLUMN tournament_year INTEGER DEFAULT 2026",
+        "ALTER TABLE fixtures ADD COLUMN source TEXT DEFAULT 'openfootball'",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # column already exists
 
 
-def save_teams(conn, data: dict) -> int:
-    count = 0
-    for item in data.get("response", []):
-        t = item.get("team", {})
-        conn.execute(
-            "INSERT OR REPLACE INTO teams (team_id, name, code, country, logo_url) VALUES (?, ?, ?, ?, ?)",
-            (t.get("id"), t.get("name"), t.get("code"), t.get("country"), t.get("logo")),
-        )
-        count += 1
-    return count
+# ---------------------------------------------------------------------------
+# Savers
+# ---------------------------------------------------------------------------
+
+def _team_id_from_name(name: str) -> int:
+    """Deterministic pseudo-ID from team name (for openfootball data)."""
+    return int(hashlib.md5(name.encode()).hexdigest()[:8], 16)
 
 
-def save_standings(conn, data: dict) -> int:
+def save_of_fixture(conn, f: dict) -> None:
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS standings (
-            team_id INTEGER PRIMARY KEY, team_name TEXT, group_name TEXT,
-            played INTEGER, wins INTEGER, draws INTEGER, losses INTEGER,
-            goals_for INTEGER, goals_against INTEGER, goal_diff INTEGER, points INTEGER
-        )
-        """
+        INSERT OR REPLACE INTO fixtures
+          (fixture_id, home_team_name, away_team_name,
+           date_utc, venue, round, group_name, status,
+           home_goals, away_goals, tournament_year, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f["fixture_id"],
+            f["team1"],
+            f["team2"],
+            f["time_utc"] or f["date_str"],
+            f["venue"],
+            f["round"],
+            f["group"],
+            f["status"],
+            f["score_home"],
+            f["score_away"],
+            2026,
+            "openfootball",
+        ),
     )
+
+
+def save_standings_from_groups(conn, groups: list) -> int:
     count = 0
-    for league_item in data.get("response", []):
-        for group in (league_item.get("league") or {}).get("standings", []):
-            for entry in group:
-                team = entry.get("team", {})
-                stats = entry.get("all", {})
-                gls = stats.get("goals", {})
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO standings
-                      (team_id, team_name, group_name, played, wins, draws, losses,
-                       goals_for, goals_against, goal_diff, points)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        team.get("id"),
-                        team.get("name"),
-                        entry.get("group"),
-                        stats.get("played", 0),
-                        stats.get("win", 0),
-                        stats.get("draw", 0),
-                        stats.get("lose", 0),
-                        gls.get("for", 0),
-                        gls.get("against", 0),
-                        entry.get("goalsDiff", 0),
-                        entry.get("points", 0),
-                    ),
-                )
-                count += 1
+    for grp in groups:
+        grp_name = grp.get("name", "")
+        teams = grp.get("teams", [])
+        for t in teams:
+            name = t.get("name", "") if isinstance(t, dict) else str(t)
+            team_id = _team_id_from_name(name)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO standings
+                  (team_id, team_name, group_name, played, wins, draws, losses,
+                   goals_for, goals_against, goal_diff, points)
+                VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0)
+                """,
+                (team_id, name, grp_name),
+            )
+            count += 1
     return count
 
 
-def save_injuries(conn, data: dict) -> int:
+def save_apifootball_fixture(conn, item: dict) -> None:
+    f = item.get("fixture", {})
+    teams = item.get("teams", {})
+    goals = item.get("goals", {})
+    league = item.get("league", {})
+    venue = (f.get("venue") or {})
+
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS injuries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fixture_id INTEGER, player_id INTEGER, player_name TEXT,
-            team_id INTEGER, type TEXT, reason TEXT,
-            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """
+        INSERT OR REPLACE INTO fixtures
+          (fixture_id, home_team_id, home_team_name, away_team_id, away_team_name,
+           date_utc, venue, city, round, group_name, status,
+           home_goals, away_goals, tournament_year, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f.get("id"),
+            (teams.get("home") or {}).get("id"),
+            (teams.get("home") or {}).get("name"),
+            (teams.get("away") or {}).get("id"),
+            (teams.get("away") or {}).get("name"),
+            f.get("date"),
+            venue.get("name"),
+            venue.get("city"),
+            league.get("round"),
+            league.get("group"),
+            (f.get("status") or {}).get("short"),
+            goals.get("home"),
+            goals.get("away"),
+            2022,
+            "api_football",
+        ),
     )
-    count = 0
-    for item in data.get("response", []):
-        fixture = item.get("fixture", {}) or {}
-        player = item.get("player", {}) or {}
-        team = item.get("team", {}) or {}
-        conn.execute(
-            "INSERT INTO injuries (fixture_id, player_id, player_name, team_id, type, reason) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                fixture.get("id"),
-                player.get("id"),
-                player.get("name"),
-                team.get("id"),
-                player.get("type"),
-                player.get("reason"),
-            ),
-        )
-        count += 1
-    return count
-
-
-def _parse_pct(val) -> float | None:
-    if val is None:
-        return None
-    try:
-        return float(str(val).strip("%"))
-    except (ValueError, TypeError):
-        return None
-
-
-def save_predictions(conn, fixture_id: int, data: dict) -> None:
-    for item in data.get("response", []):
-        pred = item.get("predictions", {}) or {}
-        winner = pred.get("winner") or {}
-        pct = pred.get("percent") or {}
-        goals = pred.get("goals") or {}
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO predictions
-              (fixture_id, winner_team, home_pct, draw_pct, away_pct,
-               home_goals_pred, away_goals_pred, advice, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                fixture_id,
-                winner.get("name"),
-                _parse_pct(pct.get("home")),
-                _parse_pct(pct.get("draw")),
-                _parse_pct(pct.get("away")),
-                float(goals["home"]) if goals.get("home") not in (None, "-") else None,
-                float(goals["away"]) if goals.get("away") not in (None, "-") else None,
-                pred.get("advice"),
-                json.dumps(item),
-            ),
-        )
-
-
-def save_odds(conn, fixture_id: int, data: dict) -> int:
-    count = 0
-    for item in data.get("response", []):
-        for bookmaker in item.get("bookmakers", []):
-            bname = bookmaker.get("name", "")
-            for bet in bookmaker.get("bets", []):
-                market = bet.get("name", "")
-                for val in bet.get("values", []):
-                    try:
-                        odd_value = float(val.get("odd", 0))
-                    except (ValueError, TypeError):
-                        odd_value = None
-                    conn.execute(
-                        "INSERT INTO odds_data (fixture_id, bookmaker_name, market_name, outcome_name, odd_value) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (fixture_id, bname, market, val.get("value"), odd_value),
-                    )
-                    count += 1
-    return count
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Odds matching helper
 # ---------------------------------------------------------------------------
 
-def _has_plan_error(data: dict) -> bool:
-    errors = data.get("errors") or {}
-    return bool(errors.get("plan") or errors.get("token") or errors.get("requests"))
+def _normalize(s: str) -> str:
+    return (s or "").lower().replace("-", " ").replace("&", "and").strip()
 
 
-def _fetch_with_fallback(client: APIFootballClient, method_name: str,
-                         season_preferred: int = 2026,
-                         season_fallback: int = 2022) -> tuple[dict, int]:
-    """Call client.<method_name>(league=1, season=season) with fallback."""
-    method = getattr(client, method_name)
-    data = method(league=1, season=season_preferred)
-    if _has_plan_error(data):
-        print(f"      [!] season={season_preferred} no disponible en plan gratuito, "
-              f"reintentando con season={season_fallback}...")
-        data = method(league=1, season=season_fallback)
-        return data, season_fallback
-    return data, season_preferred
+def find_fixture_id(conn, home: str, away: str, commence_time: str) -> int | None:
+    """
+    Match an Odds API event to a fixture_id in DB.
+    Uses date as primary filter, then fuzzy team-name match.
+    """
+    # Extract date portion from ISO timestamp
+    event_date = commence_time[:10] if commence_time else ""
+    rows = conn.execute(
+        "SELECT fixture_id, home_team_name, away_team_name FROM fixtures "
+        "WHERE date_utc LIKE ? AND tournament_year = 2026",
+        (event_date + "%",),
+    ).fetchall()
+
+    nh, na = _normalize(home), _normalize(away)
+    for row in rows:
+        rh = _normalize(row["home_team_name"] or "")
+        ra = _normalize(row["away_team_name"] or "")
+        # At least partial match on both teams
+        home_match = nh in rh or rh in nh or nh[:5] in rh
+        away_match = na in ra or ra in na or na[:5] in ra
+        if home_match and away_match:
+            return row["fixture_id"]
+        # Also try reversed (some APIs swap home/away)
+        home_match2 = nh in ra or ra in nh
+        away_match2 = na in rh or rh in na
+        if home_match2 and away_match2:
+            return row["fixture_id"]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -227,128 +170,207 @@ def _fetch_with_fallback(client: APIFootballClient, method_name: str,
 # ---------------------------------------------------------------------------
 
 def main():
-    print("=" * 50)
-    print("  WC2026 Copiloto - Seed Script")
-    print("=" * 50)
+    print("=" * 55)
+    print("  WC2026 Copiloto - Seed (arquitectura hibrida)")
+    print("=" * 55)
+
+    # Init DB and run migrations
+    init_db()
+    with get_db_connection() as conn:
+        _migrate(conn)
+    print("DB lista.\n")
+
+    # ==================================================================
+    # PASO 1 - openfootball (sin cuota)
+    # ==================================================================
+    print("-" * 55)
+    print("PASO 1 - openfootball (0 cuota consumida)")
+    print("-" * 55)
+
+    of_client = OpenFootballClient()
+
+    try:
+        fixtures = of_client.get_fixtures()
+    except Exception as e:
+        print(f"  [ERROR] No se pudo obtener fixtures de openfootball: {e}")
+        fixtures = []
+
+    unresolved_placeholders = set()
+    saved_fixtures = 0
+
+    if fixtures:
+        with get_db_connection() as conn:
+            for f in fixtures:
+                save_of_fixture(conn, f)
+                saved_fixtures += 1
+                if f["has_placeholder"]:
+                    for raw in (f["team1_raw"], f["team2_raw"]):
+                        if is_placeholder(raw) and resolve_team_name(raw) == raw:
+                            unresolved_placeholders.add(raw)
+
+    completados = sum(1 for f in fixtures if f["status"] == "completed")
+    pendientes = len(fixtures) - completados
+    print(f"  {saved_fixtures} fixtures WC2026 cargados | "
+          f"completados: {completados} | pendientes: {pendientes}")
+
+    if unresolved_placeholders:
+        print(f"\n  [!] PLACEHOLDERS SIN MAPEO: {unresolved_placeholders}")
+        print("      Agregar a backend/lib/team_resolver.py TEAM_ALIASES")
+    else:
+        print("  Todos los placeholders resueltos.")
+
+    # Groups / standings
+    try:
+        groups = of_client.get_groups()
+    except Exception as e:
+        print(f"  [ERROR] No se pudo obtener grupos: {e}")
+        groups = []
+
+    n_standings = 0
+    if groups:
+        with get_db_connection() as conn:
+            n_standings = save_standings_from_groups(conn, groups)
+    print(f"  {n_standings} entradas de standings cargadas ({len(groups)} grupos)\n")
+
+    # ==================================================================
+    # PASO 2 - The Odds API (consume cuota)
+    # ==================================================================
+    print("-" * 55)
+    print("PASO 2 - The Odds API")
+    print("-" * 55)
+
+    try:
+        odds_client = OddsAPIClient()
+        quota = odds_client.get_quota_remaining()
+        print(f"  Cuota disponible: {quota}/500")
+
+        if quota >= 10:
+            try:
+                events = odds_client.get_all_odds()
+                odds_rows = 0
+                eventos_con_odds = 0
+
+                with get_db_connection() as conn:
+                    for event in events:
+                        home_team = event.get("home_team", "")
+                        away_team = event.get("away_team", "")
+                        commence = event.get("commence_time", "")
+
+                        fid = find_fixture_id(conn, home_team, away_team, commence)
+
+                        for bookmaker in event.get("bookmakers", []):
+                            bname = bookmaker.get("title", bookmaker.get("key", ""))
+                            for market in bookmaker.get("markets", []):
+                                mname = market.get("key", "")
+                                for outcome in market.get("outcomes", []):
+                                    try:
+                                        odd_val = float(outcome.get("price", 0))
+                                    except (ValueError, TypeError):
+                                        odd_val = None
+                                    conn.execute(
+                                        "INSERT INTO odds_data "
+                                        "(fixture_id, bookmaker_name, market_name, outcome_name, odd_value) "
+                                        "VALUES (?, ?, ?, ?, ?)",
+                                        (fid, bname, mname, outcome.get("name"), odd_val),
+                                    )
+                                    odds_rows += 1
+                        eventos_con_odds += 1
+
+                quota_after = odds_client.get_quota_remaining()
+                print(f"  Odds para {eventos_con_odds} partidos ({odds_rows} filas)")
+                print(f"  Cuota restante: {quota_after}")
+
+            except OddsAPIQuotaError as e:
+                print(f"  [!] Cuota insuficiente: {e}")
+            except Exception as e:
+                print(f"  [!] Error The Odds API: {e}")
+        else:
+            print("  [!] Cuota < 10, saltando odds")
+
+    except ValueError as e:
+        print(f"  [!] OddsAPIClient no configurado: {e}")
+
     print()
 
-    # 1. Init DB
-    print("[1/5] Inicializando base de datos...")
-    init_db()
+    # ==================================================================
+    # PASO 3 - API-Football WC 2022 historico
+    # ==================================================================
+    print("-" * 55)
+    print("PASO 3 - API-Football WC 2022 (historico)")
+    print("-" * 55)
 
-    client = APIFootballClient()
-    print(f"      API key: ...{client.api_key[-6:]}\n")
+    try:
+        api_client = APIFootballClient()
+        antes = api_client.get_daily_request_count()
 
-    # 2. Fixtures
-    print("[2/5] Descargando fixtures...")
-    fixtures_data, season_used = _fetch_with_fallback(client, "get_fixtures")
-    print(f"      Usando season={season_used}")
-    if fixtures_data.get("errors"):
-        print(f"      [!] Errores API: {fixtures_data['errors']}")
-    with get_db_connection() as conn:
-        n_fixtures = save_fixtures(conn, fixtures_data)
-    print(f"      -> {n_fixtures} fixtures guardados\n")
+        data_2022 = api_client.get_fixtures_2022()
+        fixtures_2022 = data_2022.get("response", [])
 
-    # 3. Teams
-    print("[3/5] Descargando equipos...")
-    teams_data, _ = _fetch_with_fallback(client, "get_teams",
-                                          season_preferred=season_used,
-                                          season_fallback=season_used)
-    with get_db_connection() as conn:
-        n_teams = save_teams(conn, teams_data)
-    print(f"      -> {n_teams} equipos guardados\n")
+        if data_2022.get("errors"):
+            print(f"  [!] API devolvio errores: {data_2022['errors']}")
 
-    # 4. Standings
-    print("[4/5] Descargando standings...")
-    standings_data, _ = _fetch_with_fallback(client, "get_standings",
-                                              season_preferred=season_used,
-                                              season_fallback=season_used)
-    with get_db_connection() as conn:
-        n_standings = save_standings(conn, standings_data)
-    print(f"      -> {n_standings} entradas de standings guardadas\n")
-
-    # 5. Injuries
-    print("[5/5] Descargando lesiones...")
-    injuries_data, _ = _fetch_with_fallback(client, "get_injuries",
-                                             season_preferred=season_used,
-                                             season_fallback=season_used)
-    with get_db_connection() as conn:
-        n_injuries = save_injuries(conn, injuries_data)
-    print(f"      -> {n_injuries} lesiones guardadas\n")
-
-    # 6. Upcoming fixtures (today -> +4 days UTC) -> predictions + odds
-    now = datetime.now(timezone.utc)
-    cutoff = now + timedelta(days=4)
-
-    with get_db_connection() as conn:
-        rows = conn.execute(
-            "SELECT fixture_id, home_team_name, away_team_name, date_utc FROM fixtures ORDER BY date_utc"
-        ).fetchall()
-
-    upcoming = []
-    for row in rows:
-        date_str = row["date_utc"]
-        if not date_str:
-            continue
-        try:
-            fixture_dt = datetime.fromisoformat(date_str)
-            if fixture_dt.tzinfo is None:
-                fixture_dt = fixture_dt.replace(tzinfo=timezone.utc)
-            if now <= fixture_dt <= cutoff:
-                upcoming.append(row)
-        except ValueError:
-            pass
-
-    print(f"--- Partidos proximos ({now.strftime('%Y-%m-%d')} a {cutoff.strftime('%Y-%m-%d')}): "
-          f"{len(upcoming)} partido(s) ---\n")
-
-    processed = 0
-    for row in upcoming:
-        fid = row["fixture_id"]
-        home = row["home_team_name"]
-        away = row["away_team_name"]
-        print(f"  >> Fixture #{fid}: {home} vs {away}")
-        try:
-            pred_data = client.get_predictions(fid)
-            odds_data_r = client.get_odds(fid)
+        saved_2022 = 0
+        if fixtures_2022:
             with get_db_connection() as conn:
-                save_predictions(conn, fid, pred_data)
-                n_odds = save_odds(conn, fid, odds_data_r)
-            pred_resp = pred_data.get("response", [])
-            advice = ""
-            if pred_resp:
-                advice = (pred_resp[0].get("predictions") or {}).get("advice", "")
-            print(f"     predictions: {'OK' if pred_resp else '(vacio)'}  "
-                  f"odds: {n_odds} cuotas  advice: {advice}")
-        except RateLimitError as e:
-            print(f"     [!] Rate limit alcanzado: {e}")
-            break
-        except Exception as e:
-            print(f"     [X] Error en fixture #{fid}: {e}")
-        processed += 1
+                for item in fixtures_2022:
+                    save_apifootball_fixture(conn, item)
+                    saved_2022 += 1
 
-    # Summary
-    today_str = now.strftime("%Y-%m-%d")
+        despues = api_client.get_daily_request_count()
+        print(f"  {saved_2022} fixtures WC2022 guardados")
+        print(f"  Requests API-Football hoy: {antes} -> {despues}/100")
+
+    except RateLimitError as e:
+        print(f"  [!] Rate limit API-Football: {e}")
+    except Exception as e:
+        print(f"  [!] Error API-Football: {e}")
+
+    # ==================================================================
+    # RESUMEN FINAL
+    # ==================================================================
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     with get_db_connection() as conn:
-        total_fixtures = conn.execute("SELECT COUNT(*) FROM fixtures").fetchone()[0]
-        total_teams_db = conn.execute("SELECT COUNT(*) FROM teams").fetchone()[0]
+        tables = [
+            "fixtures", "teams", "predictions", "odds_data",
+            "match_statistics", "standings", "injuries",
+            "model_calibration", "api_cache", "request_log",
+        ]
+        counts = {}
+        for t in tables:
+            try:
+                counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            except Exception:
+                counts[t] = "N/A"
+
+        # Breakdown fixtures by source
+        try:
+            f2026 = conn.execute(
+                "SELECT COUNT(*) FROM fixtures WHERE tournament_year = 2026"
+            ).fetchone()[0]
+            f2022 = conn.execute(
+                "SELECT COUNT(*) FROM fixtures WHERE tournament_year = 2022"
+            ).fetchone()[0]
+        except Exception:
+            f2026 = f2022 = "N/A"
+
         real_req = conn.execute(
-            "SELECT COUNT(*) FROM request_log WHERE date = ? AND cached = 0", (today_str,)
+            "SELECT COUNT(*) FROM request_log WHERE date = ? AND cached = 0", (today,)
         ).fetchone()[0]
         cached_req = conn.execute(
-            "SELECT COUNT(*) FROM request_log WHERE date = ? AND cached = 1", (today_str,)
+            "SELECT COUNT(*) FROM request_log WHERE date = ? AND cached = 1", (today,)
         ).fetchone()[0]
 
     print()
-    print("=" * 50)
-    print(f"  RESUMEN - season={season_used}")
-    print("=" * 50)
-    print(f"  Total fixtures en DB              : {total_fixtures}")
-    print(f"  Total equipos en DB               : {total_teams_db}")
-    print(f"  Partidos proximos procesados      : {processed}")
-    print(f"  Requests HTTP reales hoy          : {real_req}")
-    print(f"  Requests cacheados hoy            : {cached_req}")
-    print("=" * 50)
+    print("=" * 55)
+    print("  RESUMEN FINAL")
+    print("=" * 55)
+    for t, c in counts.items():
+        print(f"  {t:<22}: {c}")
+    print(f"  {'fixtures WC2026':<22}: {f2026}")
+    print(f"  {'fixtures WC2022':<22}: {f2022}")
+    print(f"  {'requests reales hoy':<22}: {real_req}")
+    print(f"  {'requests cacheados hoy':<22}: {cached_req}")
+    print("=" * 55)
 
 
 if __name__ == "__main__":
