@@ -159,3 +159,19 @@ class OddsAPIClient:
             "oddsFormat": "decimal",
         }
         return self._get(path, params, cache_minutes=30)
+
+    def get_scores(self, days_from: int = 3) -> list:
+        """
+        Resultados de partidos WC2026 completados.
+        GET /v4/sports/soccer_fifa_world_cup/scores?daysFrom={days_from}
+        Costo: 2 unidades API por llamada.
+        Disponible en free tier. Cubre hasta 3 días hacia atrás.
+        """
+        path   = f"/sports/{self.SPORT}/scores"
+        params = {"daysFrom": days_from}
+        try:
+            data = self._get(path, params, cache_minutes=5)
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            print(f"  ✗ get_scores error: {e}")
+            return []

@@ -1,0 +1,242 @@
+{
+  "Spain": {
+    "elo": 2157,
+    "fifa": 1876.4,
+    "source": "tsv"
+  },
+  "Argentina": {
+    "elo": 2115,
+    "fifa": 1874.81,
+    "source": "tsv"
+  },
+  "France": {
+    "elo": 2063,
+    "fifa": 1877.32,
+    "source": "tsv"
+  },
+  "England": {
+    "elo": 2021,
+    "fifa": 1825.97,
+    "source": "tsv"
+  },
+  "Brazil": {
+    "elo": 1991,
+    "fifa": 1761.16,
+    "source": "tsv"
+  },
+  "Portugal": {
+    "elo": 1986,
+    "fifa": 1763.83,
+    "source": "tsv"
+  },
+  "Colombia": {
+    "elo": 1982,
+    "fifa": 1693.09,
+    "source": "tsv"
+  },
+  "Netherlands": {
+    "elo": 1948,
+    "fifa": 1757.87,
+    "source": "tsv"
+  },
+  "Ecuador": {
+    "elo": 1938,
+    "fifa": 1600.0,
+    "source": "tsv"
+  },
+  "Germany": {
+    "elo": 1932,
+    "fifa": 1730.37,
+    "source": "tsv"
+  },
+  "Norway": {
+    "elo": 1914,
+    "fifa": 1620.81,
+    "source": "tsv"
+  },
+  "Croatia": {
+    "elo": 1912,
+    "fifa": 1717.07,
+    "source": "tsv"
+  },
+  "Turkey": {
+    "elo": 1911,
+    "fifa": 1598.0,
+    "source": "tsv"
+  },
+  "Japan": {
+    "elo": 1906,
+    "fifa": 1660.43,
+    "source": "tsv"
+  },
+  "Belgium": {
+    "elo": 1894,
+    "fifa": 1734.71,
+    "source": "tsv"
+  },
+  "Uruguay": {
+    "elo": 1892,
+    "fifa": 1673.07,
+    "source": "tsv"
+  },
+  "Switzerland": {
+    "elo": 1891,
+    "fifa": 1649.4,
+    "source": "tsv"
+  },
+  "Mexico": {
+    "elo": 1875,
+    "fifa": 1681.03,
+    "source": "tsv"
+  },
+  "Senegal": {
+    "elo": 1860,
+    "fifa": 1688.99,
+    "source": "tsv"
+  },
+  "Paraguay": {
+    "elo": 1834,
+    "fifa": 1565.0,
+    "source": "tsv"
+  },
+  "Austria": {
+    "elo": 1830,
+    "fifa": 1590.0,
+    "source": "tsv"
+  },
+  "Morocco": {
+    "elo": 1827,
+    "fifa": 1755.87,
+    "source": "tsv"
+  },
+  "Canada": {
+    "elo": 1788,
+    "fifa": 1558.0,
+    "source": "tsv"
+  },
+  "Scotland": {
+    "elo": 1782,
+    "fifa": 1550.0,
+    "source": "tsv"
+  },
+  "Australia": {
+    "elo": 1777,
+    "fifa": 1540.0,
+    "source": "tsv"
+  },
+  "Iran": {
+    "elo": 1772,
+    "fifa": 1530.0,
+    "source": "tsv"
+  },
+  "Algeria": {
+    "elo": 1760,
+    "fifa": 1570.0,
+    "source": "tsv"
+  },
+  "South Korea": {
+    "elo": 1758,
+    "fifa": 1560.0,
+    "source": "tsv"
+  },
+  "Czech Republic": {
+    "elo": 1740,
+    "fifa": 1538.0,
+    "source": "tsv"
+  },
+  "Panama": {
+    "elo": 1730,
+    "fifa": 1510.0,
+    "source": "tsv"
+  },
+  "United States": {
+    "elo": 1726,
+    "fifa": 1673.13,
+    "source": "tsv"
+  },
+  "Sweden": {
+    "elo": 1712,
+    "fifa": 1545.0,
+    "source": "tsv"
+  },
+  "Tunisia": {
+    "elo": 1628,
+    "fifa": 1520.0,
+    "source": "tsv"
+  },
+  "Ghana": {
+    "elo": 1510,
+    "fifa": 1505.0,
+    "source": "tsv"
+  },
+  "Egypt": {
+    "elo": 1696,
+    "fifa": 1500.0,
+    "source": "tsv"
+  },
+  "South Africa": {
+    "elo": 1517,
+    "fifa": 1470.0,
+    "source": "tsv"
+  },
+  "Ivory Coast": {
+    "elo": 1695,
+    "fifa": 1495.0,
+    "source": "tsv"
+  },
+  "New Zealand": {
+    "elo": 1562,
+    "fifa": 1420.0,
+    "source": "tsv"
+  },
+  "Qatar": {
+    "elo": 1421,
+    "fifa": 1480.0,
+    "source": "tsv"
+  },
+  "Iraq": {
+    "elo": 1607,
+    "fifa": 1460.0,
+    "source": "tsv"
+  },
+  "Jordan": {
+    "elo": 1680,
+    "fifa": 1440.0,
+    "source": "tsv"
+  },
+  "Bosnia and Herzegovina": {
+    "elo": 1595,
+    "fifa": 1525.0,
+    "source": "tsv"
+  },
+  "DR Congo": {
+    "elo": 1652,
+    "fifa": 1410.0,
+    "source": "tsv"
+  },
+  "Uzbekistan": {
+    "elo": 1714,
+    "fifa": 1400.0,
+    "source": "tsv"
+  },
+  "Haiti": {
+    "elo": 1548,
+    "fifa": 1370.0,
+    "source": "tsv"
+  },
+  "Cape Verde": {
+    "elo": 1578,
+    "fifa": 1395.0,
+    "source": "tsv"
+  },
+  "Curacao": {
+    "elo": 1434,
+    "fifa": 1350.0,
+    "source": "tsv"
+  },
+  "Saudi Arabia": {
+    "elo": 1576,
+    "fifa": 1490.0,
+    "source": "tsv"
+  }
+}

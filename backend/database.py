@@ -114,6 +114,33 @@ CREATE TABLE IF NOT EXISTS injuries (
     reason      TEXT,
     fetched_at  TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS team_strength (
+    team_id        INTEGER PRIMARY KEY,
+    team_name      TEXT NOT NULL,
+    elo_rating     REAL DEFAULT 1500,
+    attack_rating  REAL DEFAULT 1.0,
+    defense_rating REAL DEFAULT 1.0,
+    games_played   INTEGER DEFAULT 0,
+    goals_scored   INTEGER DEFAULT 0,
+    goals_conceded INTEGER DEFAULT 0,
+    last_updated   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS value_bets (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    fixture_id     INTEGER,
+    market_name    TEXT,
+    outcome_name   TEXT,
+    model_prob     REAL,
+    bookmaker_prob REAL,
+    edge           REAL,
+    kelly_stake    REAL,
+    bookmaker_name TEXT,
+    odd_value      REAL,
+    created_at     TEXT,
+    FOREIGN KEY (fixture_id) REFERENCES fixtures(fixture_id)
+);
 """
 
 
