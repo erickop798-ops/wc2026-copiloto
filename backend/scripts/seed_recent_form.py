@@ -190,6 +190,31 @@ def compute_ratings(matches: list, teams: list) -> dict:
             "conceded": s["conceded"],
             "source":   source,
         }
+
+    # ── NORMALIZACIÓN AL CONTEXTO WC ─────────────────────────────────────────
+    # Los ratings están calibrados contra el dataset internacional completo,
+    # que incluye partidos de equipos débiles con más goles.
+    # Re-centra para que el equipo WC promedio tenga atk=1.0, def=1.0.
+    # Esto asegura que WC_AVG_GOALS=1.30 en poisson.py sea el valor correcto.
+
+    real_teams = {t: r for t, r in results.items()
+                  if r['attack'] is not None and r['games'] >= 3}
+
+    if real_teams:
+        avg_atk = sum(r['attack']  for r in real_teams.values()) / len(real_teams)
+        avg_def = sum(r['defense'] for r in real_teams.values()) / len(real_teams)
+
+        print(f"\n  Promedio pre-normalización:")
+        print(f"    avg_attack  = {avg_atk:.4f}  (target: 1.0)")
+        print(f"    avg_defense = {avg_def:.4f}  (target: 1.0)")
+
+        for team in results:
+            if results[team]['attack'] is not None:
+                results[team]['attack']  = round(results[team]['attack']  / avg_atk, 4)
+                results[team]['defense'] = round(results[team]['defense'] / avg_def, 4)
+
+        print(f"  OK Normalizacion aplicada")
+
     return results
 
 def update_team_strength(ratings: dict) -> None:
