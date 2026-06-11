@@ -61,11 +61,21 @@ def build_market_comparison(fixture_id: int, prediction: dict) -> list:
     """
     comparisons = []
 
+    # Nombres reales de equipos (la BD guarda "Mexico", no "Home")
+    _c = _conn()
+    _tr = _c.execute(
+        "SELECT home_team_name, away_team_name FROM fixtures WHERE fixture_id = ?",
+        (fixture_id,)
+    ).fetchone()
+    _c.close()
+    home_team = _tr[0] if _tr else "Home"
+    away_team = _tr[1] if _tr else "Away"
+
     # ── 1X2 ─────────────────────────────────────────────────────────────────
     for label, prob_key, bm_out in [
-        ("Home", "p_home", "Home"),
+        ("Home", "p_home", home_team),
         ("Draw", "p_draw", "Draw"),
-        ("Away", "p_away", "Away"),
+        ("Away", "p_away", away_team),
     ]:
         best = get_best_odd(fixture_id, "h2h", bm_out)
         if best:
@@ -82,25 +92,21 @@ def build_market_comparison(fixture_id: int, prediction: dict) -> list:
                 "is_informational": False,
             })
 
-    # ── BTTS ─────────────────────────────────────────────────────────────────
-    for label, prob_key, bm_out in [
-        ("Yes", "p_btts_yes", "Yes"),
-        ("No",  "p_btts_no",  "No"),
+    # ── BTTS — mercado 'btts' no existe en odds_data; solo probabilidad modelo ──
+    for label, prob_key in [
+        ("BTTS Si", "p_btts_yes"),
+        ("BTTS No", "p_btts_no"),
     ]:
-        best = get_best_odd(fixture_id, "btts", bm_out)
-        if best:
-            bm_prob    = 1.0 / best["odd_value"]
-            model_prob = prediction[prob_key]
-            comparisons.append({
-                "market":          "BTTS",
-                "outcome":         label,
-                "model_prob":      round(model_prob, 4),
-                "bookmaker_prob":  round(bm_prob,    4),
-                "bookmaker_odds":  best["odd_value"],
-                "edge":            round(model_prob - bm_prob, 4),
-                "bookmaker_name":  best["bookmaker_name"],
-                "is_informational": False,
-            })
+        comparisons.append({
+            "market":          "BTTS",
+            "outcome":         label,
+            "model_prob":      round(prediction.get(prob_key, 0), 4),
+            "bookmaker_prob":  None,
+            "bookmaker_odds":  None,
+            "edge":            None,
+            "bookmaker_name":  None,
+            "is_informational": True,
+        })
 
     # ── O/U 2.5 — usa mercado 'totals' (línea única, confiable) ─────────────
     for label, prob_key, bm_out in [
@@ -145,8 +151,8 @@ def build_market_comparison(fixture_id: int, prediction: dict) -> list:
 
     # ── Asian Handicap −0.5 / +0.5 ──────────────────────────────────────────
     for label, prob_key, bm_out in [
-        ("Home −0.5", "p_ah_home", "Home"),
-        ("Away +0.5", "p_ah_away", "Away"),
+        (f"{home_team} −0.5", "p_ah_home", home_team),
+        (f"{away_team} +0.5", "p_ah_away", away_team),
     ]:
         best = get_best_odd(fixture_id, "spreads", bm_out)
         if best:
@@ -168,7 +174,7 @@ def build_market_comparison(fixture_id: int, prediction: dict) -> list:
     # paga exactamente esa odd. Se marca informativa, NO entra a value_bets.
     conn = _conn()
     h2h_rows = {}
-    for out in ["Home", "Draw", "Away"]:
+    for key, out in [("Home", home_team), ("Draw", "Draw"), ("Away", away_team)]:
         row = conn.execute("""
             SELECT bookmaker_name, odd_value FROM odds_data
             WHERE fixture_id = ? AND market_name = 'h2h' AND outcome_name = ?
@@ -176,7 +182,7 @@ def build_market_comparison(fixture_id: int, prediction: dict) -> list:
             LIMIT 1
         """, (fixture_id, out)).fetchone()
         if row:
-            h2h_rows[out] = row[1]
+            h2h_rows[key] = row[1]
     conn.close()
 
     if len(h2h_rows) == 3:

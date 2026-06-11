@@ -145,10 +145,15 @@ function renderTab(tab) {
   tablaDiv.classList.add('hidden');
 
   const now      = new Date();
-  const todayS   = now.toISOString().slice(0,10);
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const tomorrowS = tomorrow.toISOString().slice(0,10);
+  const mxNow    = new Date(now.toLocaleString('en-US', {timeZone: 'America/Mexico_City'}));
+  const todayS   = mxNow.getFullYear() + '-' +
+                   String(mxNow.getMonth() + 1).padStart(2, '0') + '-' +
+                   String(mxNow.getDate()).padStart(2, '0');
+  const tomorrowMx = new Date(mxNow);
+  tomorrowMx.setDate(mxNow.getDate() + 1);
+  const tomorrowS  = tomorrowMx.getFullYear() + '-' +
+                     String(tomorrowMx.getMonth() + 1).padStart(2, '0') + '-' +
+                     String(tomorrowMx.getDate()).padStart(2, '0');
 
   let filtered;
   if (tab === 'hoy') {
@@ -204,12 +209,16 @@ function renderMatchCard(m) {
     <div class="px-4 py-2 flex gap-4 text-xs text-slate-400"
          style="border-bottom:1px solid #334155">
       <span>Modelo: &lambda; ${m.home.split(' ')[0]}
-        <strong class="text-slate-200">${(m.model.lambda_home||0).toFixed(2)}</strong>
+        <strong class="${m.model.lambda_home >= m.model.lambda_away ? 'text-slate-200' : 'text-slate-400'}">
+          ${(m.model.lambda_home||0).toFixed(2)}
+        </strong>
       </span>
       <span>&lambda; ${m.away.split(' ')[0]}
-        <strong class="text-slate-200">${(m.model.lambda_away||0).toFixed(2)}</strong>
+        <strong class="${m.model.lambda_away > m.model.lambda_home ? 'text-slate-200' : 'text-slate-400'}">
+          ${(m.model.lambda_away||0).toFixed(2)}
+        </strong>
       </span>
-      <span class="text-slate-500">(goles esperados por equipo)</span>
+      <span class="text-slate-500">goles esperados &middot; se recalibra tras cada jornada</span>
     </div>
 
     <!-- Value bets -->
@@ -430,17 +439,30 @@ function getEdgeClass(colorName) {
 }
 
 function toMexicoTime(utcStr) {
+  if (!utcStr) return 'Hora por confirmar';
   try {
-    const d = new Date(utcStr.includes('Z') ? utcStr : utcStr + 'Z');
-    return d.toLocaleString('es-MX', {
-      timeZone: 'America/Mexico_City',
-      weekday:  'short',
-      day:      '2-digit',
-      month:    'short',
-      hour:     '2-digit',
-      minute:   '2-digit',
-    });
-  } catch(e) { return utcStr; }
+    const d = new Date(utcStr);
+    if (isNaN(d.getTime())) {
+      const norm = utcStr.replace(' ', 'T').replace('+00:00', 'Z');
+      const d2   = new Date(norm);
+      if (isNaN(d2.getTime())) return utcStr.slice(0, 16) + ' UTC';
+      return formatMxDate(d2);
+    }
+    return formatMxDate(d);
+  } catch(e) {
+    return utcStr ? utcStr.slice(0, 16) + ' UTC' : 'TBD';
+  }
+}
+
+function formatMxDate(d) {
+  return d.toLocaleString('es-MX', {
+    timeZone: 'America/Mexico_City',
+    weekday:  'short',
+    day:      '2-digit',
+    month:    'short',
+    hour:     '2-digit',
+    minute:   '2-digit',
+  });
 }
 </script>
 </body>

@@ -68,7 +68,7 @@ def get_predictions():
     Incluye todos los mercados, momios americanos y value bets.
     """
     conn = get_db()
-    cutoff = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=4)).strftime('%Y-%m-%dT23:59:59')
 
     rows = conn.execute("""
         SELECT fixture_id, home_team_name, away_team_name,
